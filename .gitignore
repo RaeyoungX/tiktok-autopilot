@@ -1,0 +1,17 @@
+# API keys — never commit
+.env
+
+# Generated images (large, temp)
+/tmp/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.python-version
+
+# Personal product profiles (optional: remove this line to share profiles)
+# profiles/*.md
