@@ -221,7 +221,34 @@ Post | Template     | Hook (preview)          | Slides | Output Dir
 ...
 ```
 
-Ask the user: "Publish all 5 now, select specific posts, or review first?"
+Ask the user: "Publish as **photo post** (图文) or convert to **video** with Seedance 2.0?"
+
+### Phase 4b: Video Generation (optional — Seedance 2.0)
+
+If user chooses video, animate each slide into a cinematic clip then concat:
+
+```bash
+python3 ~/.claude/skills/tiktok-autopilot/scripts/create_video.py \
+  --slides /tmp/tiktok-{slug}/post-01/ \
+  --output /tmp/tiktok-{slug}/post-01/final.mp4 \
+  --duration 5 \
+  --quality fast \
+  --context "English speaking practice app"
+```
+
+**What it does:**
+1. Uploads each slide_*.jpg to 0x0.st (public URL)
+2. Calls Seedance 2.0 (`bytedance/seedance-2.0/fast/image-to-video`) via fal.ai
+3. Each slide → 5s cinematic clip with mood-matched motion prompt
+4. ffmpeg concatenates all clips → `final.mp4` (1080×1920, TikTok-ready)
+
+**Cost:** ~$0.24/s × 5s × 4 slides ≈ **$4.84 per post**
+**Requires:** `FAL_KEY` in `.env` — get at https://fal.ai/dashboard/keys
+
+**Advantage over photo post:**
+- Upload via TikTok Studio web (no API approval wait)
+- Add background music in TikTok app after upload
+- Algorithm generally favors video over photo carousel
 
 ---
 
@@ -293,4 +320,5 @@ See `references/tiktok-posting.md` for step-by-step.
 - `references/tiktok-posting.md` — Publishing guide (API method + mobile fallback)
 - `scripts/scrape_tiktok.py` — Apify + yt-dlp viral post scraper (Phase 2)
 - `scripts/create_images.py` — Imagen 4 + PIL slide generator (Phase 4)
+- `scripts/create_video.py` — Seedance 2.0 image-to-video animator (Phase 4b)
 - `scripts/publish_tiktok.py` — TikTok Content Posting API publisher (Phase 5)
