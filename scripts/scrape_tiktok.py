@@ -64,6 +64,7 @@ def scrape_keyword(keyword: str, limit: int) -> list[dict]:
 
     posts = []
     for item in client.dataset(run["defaultDatasetId"]).iterate_items():
+        content_type = classify_content(item.get("text") or "")
         post = {
             "keyword": keyword,
             "id": item.get("id", ""),
@@ -79,8 +80,13 @@ def scrape_keyword(keyword: str, limit: int) -> list[dict]:
             "author_followers": item.get("authorMeta", {}).get("fans", 0),
             "duration": item.get("videoMeta", {}).get("duration", 0),
             "created": item.get("createTimeISO", ""),
-            "content_type": classify_content(item.get("text") or ""),
+            "content_type": content_type,
         }
+        copyability = score_copyability(post)
+        post["copyability_score"] = copyability["score"]
+        post["copyable"] = copyability["copyable"]
+        post["formula"] = copyability["formula"]
+        post["explosiveness"] = round(explosiveness(post), 2)
         posts.append(post)
 
     # Sort by likes descending
@@ -103,6 +109,92 @@ def classify_content(caption: str) -> str:
     if any(w in c for w in ["5 ", "3 ", "7 ", "signs", "reasons", "things"]):
         return "list"
     return "other"
+
+
+def score_copyability(post: dict) -> dict:
+    """
+    Score how easily this post's FORMAT can be reproduced for any product.
+    Returns score 0-10 + reason + formula label.
+
+    Copyable = the structure works without real-location footage,
+               authentic emotional moments, or large follower bases.
+    """
+    caption = (post.get("caption") or "").lower()
+    content_type = post.get("content_type", "other")
+    followers = post.get("author_followers", 0)
+
+    score = 5  # neutral start
+    reasons = []
+    formula = "unknown"
+
+    # ── Boost: reproducible formats ──────────────────────────────────────
+    if content_type == "list":
+        score += 3
+        formula = "LIST: N things you need to know about X"
+        reasons.append("list format — swap topic for any product")
+
+    if content_type == "education":
+        score += 2
+        formula = "EDUCATION: How to do X (step by step)"
+        reasons.append("tutorial format — universally reproducible")
+
+    if content_type == "pain_point":
+        score += 2
+        formula = "PAIN: You struggled with X → here's the fix"
+        reasons.append("pain+solution — works for any product category")
+
+    if content_type == "comparison":
+        score += 1
+        formula = "COMPARISON: X vs Y — which is better?"
+        reasons.append("comparison — reproducible with any alternatives")
+
+    if any(w in caption for w in ["wish i knew", "before you go", "don't make", "mistake", "avoid"]):
+        score += 2
+        formula = "REGRET: N things I wish I knew before X"
+        reasons.append("regret hook — high save rate, any niche")
+
+    if any(w in caption for w in ["how to", "step", "guide", "tutorial", "tips"]):
+        score += 1
+        reasons.append("explicit how-to — tutorial intent, copyable")
+
+    if any(w in caption for w in ["app", "tool", "website", "platform", "software"]):
+        score += 1
+        reasons.append("tool showcase — natural fit for app products")
+
+    # ── Penalty: hard-to-reproduce formats ───────────────────────────────
+    if any(w in caption for w in ["found", "random", "stranger", "lucky", "surprised", "shocked"]):
+        score -= 3
+        reasons.append("spontaneous moment — not reproducible")
+
+    if any(w in caption for w in ["reaction", "prank", "challenge"]):
+        score -= 2
+        reasons.append("reaction/prank format — personality-dependent")
+
+    # Large account penalty — success may be follower-driven not content-driven
+    if followers > 100000:
+        score -= 2
+        reasons.append(f"large account ({followers:,} followers) — reach may be follower-driven")
+    elif followers < 10000:
+        score += 1
+        reasons.append(f"small account ({followers:,} followers) — content-driven virality")
+
+    score = max(0, min(10, score))
+
+    # Assign formula for "other" content type if not yet set
+    if formula == "unknown":
+        formula = "RAW: Original format — analyze manually"
+
+    return {
+        "score": score,
+        "copyable": score >= 6,
+        "formula": formula,
+        "reasons": reasons,
+    }
+
+
+def explosiveness(post: dict) -> float:
+    """Likes / max(followers, 1) — how much the content punched above its weight."""
+    return post.get("likes", 0) / max(post.get("author_followers", 1), 1)
 
 
 # ── yt-dlp downloader ──────────────────────────────────────────────────────
@@ -253,12 +345,24 @@ def main():
     )
 
     # Print summary
-    print("\n── Top 5 Posts ──")
-    for i, p in enumerate(result["posts"][:5]):
-        print(f"{i+1}. [{p['content_type']}] {p['hook'][:70]}")
-        print(f"   ❤️ {p['likes']:,}  💬 {p['comments']:,}  🔁 {p['shares']:,}")
+    posts = result["posts"]
 
-    print("\n── Top Hashtags ──")
+    # ── Copyable viral formulas (small account + high copyability) ──
+    copyable = [p for p in posts if p.get("copyable") and p.get("author_followers", 999999) < 100000]
+    copyable.sort(key=lambda x: (x["explosiveness"], x["copyability_score"]), reverse=True)
+
+    print("\n── ✅ Copyable Viral Formulas (small account + reproducible format) ──")
+    if copyable:
+        for i, p in enumerate(copyable[:5]):
+            print(f"{i+1}. [{p['copyability_score']}/10] {p['formula']}")
+            print(f"   ❤️ {p['likes']:,} | 粉丝 {p.get('author_followers',0):,} | 爆发 {p['explosiveness']:.1f}x")
+            print(f"   Hook: {p['hook'][:80]}")
+            print(f"   URL: {p['url']}")
+            print()
+    else:
+        print("  (none found — try broader keywords or lower copyability threshold)")
+
+    print("── Top Hashtags ──")
     for h in result["top_hashtags"][:10]:
         print(f"  #{h['tag']} ({h['count']}x)")
 
@@ -266,9 +370,11 @@ def main():
     for ct, count in result["content_type_breakdown"].items():
         print(f"  {ct}: {count}")
 
-    print(f"\n── Hook Patterns (top posts) ──")
-    for hook in result["hook_patterns"][:5]:
-        print(f'  "{hook}"')
+    print(f"\n── All Top Posts (by likes) ──")
+    for i, p in enumerate(posts[:5]):
+        copyable_flag = "✅" if p.get("copyable") else "❌"
+        print(f"{i+1}. {copyable_flag} [{p['content_type']}] {p['hook'][:70]}")
+        print(f"   ❤️ {p['likes']:,} | 粉丝 {p.get('author_followers',0):,} | 爆发 {p['explosiveness']:.1f}x")
 
 
 if __name__ == "__main__":
